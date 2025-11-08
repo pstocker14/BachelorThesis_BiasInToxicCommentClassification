@@ -97,8 +97,8 @@ def split_dataset(df: pd.DataFrame, identity_cols: list[str]) -> tuple[pd.DataFr
     test_data, validation_data = train_test_split(test_data, test_size=0.5, random_state=42, stratify=test_data["strat_key"])
 
     # Drop helper column
-    for d in (train_data, validation_data, test_data):
-        d.drop(columns=["strat_key"], inplace=True, errors="ignore")
+    for d in (df, train_data, validation_data, test_data):
+        d.drop(columns=["strat_key", "has_identity", "label"], inplace=True)
 
     # Reset the index of the dataframes
     train_data = train_data.reset_index(drop=True)
@@ -144,9 +144,8 @@ def binarize_labels(
 ) -> pd.DataFrame:
     """Add a binary label column from a continuous target score in [0,1]."""
     
-    df_updated = df.copy()
-    df_updated[new_col_name] = (df_updated[target_col] >= threshold).astype(int)
-    return df_updated
+    df[new_col_name] = (df[target_col] >= threshold).astype(int)
+    return df
 
 #endregion
 
