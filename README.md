@@ -15,7 +15,7 @@ BA_Thesis/
 │   └── processed/    # Cleaned/derived datasets for modeling
 ├── notebooks/        # Exploratory and analysis notebooks
 ├── src/              # Reusable Python modules
-├── reports/          # Weekly summaries, interim reports
+├── reports/          # Interim reports if existing
 ├── figures/          # Generated plots & diagrams
 ├── requirements.txt  # Python dependencies (pip) NOTE: not yet implemented
 └── .gitignore        # Ignore patterns

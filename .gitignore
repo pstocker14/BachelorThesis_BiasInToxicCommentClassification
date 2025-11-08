@@ -19,3 +19,10 @@ __pycache__/
 .env
 .venv/
 .DS_Store
+
+# to keep track of empty folders
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!models/.gitkeep
+!figures/.gitkeep
+!reports/.gitkeep
