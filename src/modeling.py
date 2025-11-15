@@ -7,9 +7,9 @@ from sklearn.linear_model import LogisticRegression as LR
 from sklearn.calibration import CalibratedClassifierCV as CCCV #TODO: do we need this? make some research
 
 def train_lr_tfidf(
-    X_train: np.ndarray,
+    x_train: np.ndarray,
     y_train: np.ndarray,
-    X_val: np.ndarray,
+    x_val: np.ndarray,
     y_val: np.ndarray,
     class_weight: str = "balanced",
     C: float = 1.0,
@@ -40,27 +40,47 @@ def train_lr_tfidf(
     lr_model = LR(class_weight=class_weight, C=C, penalty=penalty, solver=solver, random_state=random_state, max_iter=max_iter)
     
     if calibrate:
-        lr_model.fit(X_train, y_train) # Fit the base model first
+        lr_model.fit(x_train, y_train) # Fit the base model first
 
         model = CCCV(lr_model, method="sigmoid", cv="prefit") # Use prefit since we will fit lr_model separately
-        model.fit(X_val, y_val)
+        model.fit(x_val, y_val)
     else:
         model = lr_model
-        model.fit(X_train, y_train)
+        model.fit(x_train, y_train)
 
     return {
         "model": model,
         "uncalibrated_model": lr_model if calibrate else None
     }
 
+def predict_with_model(
+    model: Any,
+    x: np.ndarray,
+    threshold: float = 0.5
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Predict labels using the trained model and a specified threshold.
+
+    Args:
+        model (Any): Trained model.
+        x (np.ndarray): Feature matrix for prediction.
+        threshold (float): Decision threshold for classifying positive classification.
+
+    Returns:
+        np.ndarray: Predicted labels.
+    """
+    y_proba = model.predict_proba(x)[:, 1]  # Probability of the positive class
+    y_pred = (y_proba >= threshold).astype(int) # Convert probabilities to binary labels based on the threshold
+    
+    return (y_proba, y_pred)
+
 def extract_feature_and_label_arrays(
-    data: Dict[str, pd.Series[Any]],
+    data: Dict[str, Any],
     feature_col: str = "x",
     label_col: str = "y"
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[Any, Any]:
     """Extract feature and label arrays from the dictionary."""
     
-    x = data[feature_col].to_numpy()
-    y = data[label_col].to_numpy()
+    x = data[feature_col]
+    y = data[label_col]
     
     return x, y
