@@ -66,7 +66,6 @@ def train_lr_tfidf(
         C = best_params["C"]
         penalty = best_params["penalty"]
         solver = best_params["solver"]
-        #max_iter = best_params.get("max_iter", max_iter)  # use default if not specified
 
     lr_model = LR(class_weight=class_weight, C=C, penalty=penalty, solver=solver, random_state=random_state, max_iter=max_iter)
     
@@ -152,3 +151,37 @@ def find_best_hyperparameters(
     print("Best CV AUC: {:.4f}".format(grid_search.best_score_))
 
     return grid_search.best_params_
+
+def find_best_threshold(
+    y_val: np.ndarray,
+    y_proba: np.ndarray,
+    thresholds: Optional[np.ndarray] = None
+) -> float:
+    """Find the best decision threshold based on F1-score.
+
+    Args:
+        y_val (np.ndarray): True labels.
+        y_proba (np.ndarray): Predicted probabilities for the positive class.
+        thresholds (Optional[np.ndarray]): Array of thresholds to evaluate. If None, defaults to values from 0.05 to 0.95 with a step of 0.01.
+
+    Returns:
+        float: Best threshold value.
+    """
+    from sklearn.metrics import f1_score
+
+    if thresholds is None:
+        thresholds = np.linspace(0.05, 0.95, 91)
+
+    best_threshold = 0.5
+    best_f1 = -1.0
+
+    for threshold in thresholds:
+        y_pred = (y_proba >= threshold).astype(int)
+        current_f1 = f1_score(y_val, y_pred)
+
+        if current_f1 > best_f1:
+            best_f1 = current_f1
+            best_threshold = threshold
+
+    print(f"Best threshold: {best_threshold:.2f} with F1-score: {best_f1:.4f}")
+    return best_threshold
