@@ -6,6 +6,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.calibration import CalibratedClassifierCV as CCCV
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.metrics import f1_score
 
 CV = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -95,7 +96,7 @@ def predict_with_model(
         threshold (float): Decision threshold for classifying positive classification.
 
     Returns:
-        np.ndarray: Predicted labels.
+        Tuple[np.ndarray, np.ndarray]: Predicted probabilities and binary labels.
     """
     y_proba = model.predict_proba(x)[:, 1]  # Probability of the positive class
     y_pred = (y_proba >= threshold).astype(int) # Convert probabilities to binary labels based on the threshold
@@ -107,7 +108,16 @@ def extract_feature_and_label_arrays(
     feature_col: str = "x",
     label_col: str = "y"
 ) -> Tuple[Any, Any]:
-    """Extract feature and label arrays from the dictionary."""
+    """Extract feature and label arrays from the dictionary.
+    
+    Args:
+        data (Dict[str, Any]): Dictionary containing feature and label arrays.
+        feature_col (str): Key for the feature array in the dictionary.
+        label_col (str): Key for the label array in the dictionary.
+
+    Returns:
+        Tuple[Any, Any]: Feature and label arrays.
+    """
     
     x = data[feature_col]
     y = data[label_col]
@@ -167,7 +177,6 @@ def find_best_threshold(
     Returns:
         float: Best threshold value.
     """
-    from sklearn.metrics import f1_score
 
     if thresholds is None:
         thresholds = np.linspace(0.05, 0.95, 91)

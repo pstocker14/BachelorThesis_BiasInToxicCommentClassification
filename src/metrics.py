@@ -2,20 +2,22 @@ from typing import Dict
 import numpy as np
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, average_precision_score, confusion_matrix
+    roc_auc_score, average_precision_score
 )
+
+#region Overall metrics computation
 
 def compute_overall_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray) -> Dict[str, float]:
     """
     Compute overall classification metrics.
 
-    Parameters:
-    - y_true: array-like of shape (n_samples) - True labels.
-    - y_pred: array-like of shape (n_samples) - Predicted labels.
-    - y_proba: array-like of shape (n_samples) - Predicted probabilities.
+    Args:
+        y_true (array-like of shape (n_samples)): True labels.
+        y_pred (array-like of shape (n_samples)): Predicted labels.
+        y_proba (array-like of shape (n_samples)): Predicted probabilities.
 
     Returns:
-    - metrics: dict - Dictionary containing accuracy, precision, recall, F1-score,
+        metrics (dict): Dictionary containing accuracy, precision, recall, F1-score,
                       ROC AUC, and Average Precision.
     """
     metrics = {}
@@ -33,3 +35,6 @@ def compute_overall_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.
     metrics['pr_auc'] = average_precision_score(y_true, y_proba)
     
     return metrics
+
+#endregion
+
