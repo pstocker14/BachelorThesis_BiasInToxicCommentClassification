@@ -1,6 +1,8 @@
+from __future__ import annotations
 from typing import Dict
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     roc_curve, roc_auc_score, precision_recall_curve,
     average_precision_score, confusion_matrix
@@ -100,7 +102,7 @@ def plot_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, title="Confusi
     for j in range(cm.shape[1] + 1):
         plt.axvline(j - 0.5, color="black", linewidth=1)
 
-    # Title
+    # Title (same as before)
     plt.title(title)
 
     # X and Y axis ticks
@@ -118,5 +120,66 @@ def plot_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, title="Confusi
     plt.xlabel("Predicted")
     plt.tight_layout()
     plt.show()
+
+#endregion
+
+#region Fairness visualizations
+
+def plot_auc_bars(df_metrics: pd.DataFrame, figsize=(10,5)):
+    """
+    Bar chart of Subgroup AUC, BPSN AUC, BNSP AUC per subgroup.
+
+    Args:
+        df_metrics (pd.DataFrame): DataFrame containing subgroup metrics.
+        figsize (tuple): Figure size.
+    """
+    cols = ["subgroup_auc", "bpsn_auc", "bnsp_auc"]
+    data = df_metrics.set_index("subgroup")[cols]
+    ax = data.plot(kind="bar", figsize=figsize)
+    ax.set_ylim(0.5, 1.0)
+    ax.set_ylabel("AUC")
+    ax.set_title("Subgroup, BPSN, BNSP AUCs — Baseline")
+    ax.legend(title="Metric")
+    plt.tight_layout()
+    plt.show()
+
+def plot_rate_gaps_bars(df_metrics: pd.DataFrame, figsize=(10,5)):
+    """
+    Bar chart of FPR/FNR gaps (sg - bg). Zero line for reference.
+
+    Args:
+        df_metrics (pd.DataFrame): DataFrame containing subgroup metrics.
+        figsize (tuple): Figure size.
+    """
+    cols = ["gap_fpr", "gap_fnr"]
+    data = df_metrics.set_index("subgroup")[cols]
+    ax = data.plot(kind="bar", figsize=figsize)
+    ax.axhline(0.0, linestyle="--")
+    ax.set_ylabel("Gap (Subgroup - Background)")
+    ax.set_title("FPR/FNR Gaps")
+    ax.legend(title="Gap")
+    plt.tight_layout()
+    plt.show()
+
+def print_small_sample_warnings(df_metrics: pd.DataFrame, min_rows: int = 50, min_pos: int = 5, min_neg: int = 5):
+    """
+    Print warnings for subgroups with small samples (to contextualize NaNs/instability).
+
+    Args:
+        df_metrics (pd.DataFrame): DataFrame containing subgroup metrics.
+        min_rows (int): Minimum total rows for subgroup.
+        min_pos (int): Minimum positive samples for subgroup.
+        min_neg (int): Minimum negative samples for subgroup.
+    """
+    for _, r in df_metrics.iterrows():
+        msgs = []
+        if r["n_subgroup"] < min_rows:
+            msgs.append(f"n_subgroup={r['n_subgroup']}")
+        if r["n_sg_pos"] < min_pos:
+            msgs.append(f"n_sg_pos={r['n_sg_pos']}")
+        if r["n_sg_neg"] < min_neg:
+            msgs.append(f"n_sg_neg={r['n_sg_neg']}")
+        if msgs:
+            print(f"[WARN] {r['subgroup']}: small sample -> " + ", ".join(msgs))
 
 #endregion
