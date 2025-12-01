@@ -9,7 +9,9 @@ import re
 def apply_cda_augmentation(
         df: pd.DataFrame,
         text_col: str = "comment_text_processed",
+        label_col: str = "labelled_as_toxic",
         identity_config: Optional[Dict[str, Dict[str, Any]]] = None,
+        max_augments_per_row: int = 3,
         random_state: Optional[int] = 42
 ) -> pd.DataFrame:
     """
@@ -33,6 +35,8 @@ def apply_cda_augmentation(
         - The default identity configuration and augmentation strengths are based
           on the subgroup metrics computed earlier on the base model, prioritizing highly
           biased or underrepresented subgroups.
+        - After first iteration, a differentiation between toxic and non-toxic
+          samples is made to fight higher false positive rates for identity mentions in non-toxic comments.
         - By default, random replacements are used, ensuring that no fixed
           mapping (e.g., always gay -> heterosexual) is encoded.
 
@@ -40,9 +44,12 @@ def apply_cda_augmentation(
         df (pd.DataFrame): Input DataFrame containing at least the text and label
             columns. The label column is not changed by CDA.
         text_col (str): Name of the column containing the comment text.
+        label_col (str): Name of the column containing the toxicity label.
         identity_config (Optional[Dict[str, Dict[str, Any]]]): Optional custom
             identity configuration. If None, a default configuration based on
             the subgroup metrics analysis is used.
+        max_augments_per_row (int): Maximum number of augmented samples to
+            create per original row (to limit dataset growth).
         random_state (Optional[int]): Optional random seed for reproducibility.
 
     Returns:
@@ -69,9 +76,11 @@ def apply_cda_augmentation(
         new_rows = _generate_cda_for_row(
             row=row,
             text_col=text_col,
+            label_col=label_col,
             identity_config=identity_config,
             identity_patterns=identity_patterns,
             augmentation_counters=augmentation_counters,
+            max_augments_per_row=max_augments_per_row,
             rng=rng
         )
         augmented_rows.extend(new_rows)
@@ -118,22 +127,22 @@ def _build_default_identity_config() -> Dict[str, Dict[str, Any]]:
         "heterosexual": {
             "terms": ["heterosexual", "straight"],
             "replacement_terms": ["homosexual", "gay", "lesbian", "bisexual", "transgender"],
-            "n_augment": 3,
+            "n_augment": [3, 0]      # [non-toxic, toxic]
         },
         "homosexual_gay_or_lesbian": {
             "terms": ["gay", "lesbian", "homosexual"],
             "replacement_terms": ["heterosexual", "straight", "bisexual", "transgender"],
-            "n_augment": 1,
+            "n_augment": [2, 1]       
         },
         "bisexual": {
             "terms": ["bisexual"],
             "replacement_terms": ["heterosexual", "straight", "homosexual", "gay", "lesbian", "transgender"],
-            "n_augment": 3,
+            "n_augment": [3, 1],
         },
         "transgender": {
             "terms": ["transgender", "trans"],
             "replacement_terms": ["heterosexual", "straight", "homosexual", "gay", "lesbian", "bisexual"],
-            "n_augment": 2,
+            "n_augment": [2, 1],
         },
     }
 
@@ -255,9 +264,11 @@ def _swap_identity_terms_in_text(
 def _generate_cda_for_row(
         row: pd.Series,
         text_col: str,
+        label_col: str,
         identity_config: Dict[str, Dict[str, Any]],
         identity_patterns: Dict[str, List[re.Pattern]],
         augmentation_counters: Dict[str, int],
+        max_augments_per_row: int = 3,
         rng: np.random.Generator = np.random.default_rng()
 ) -> List[Dict[str, Any]]:
     """
@@ -274,11 +285,14 @@ def _generate_cda_for_row(
     Args:
         row (pd.Series): Single DataFrame row representing one comment.
         text_col (str): Column name containing the comment text.
+        label_col (str): Name of the column containing the toxicity label.
         identity_config (Dict[str, Dict[str, Any]]): Identity configuration.
         identity_patterns (Dict[str, List[re.Pattern]]): Compiled regex patterns for each group.
-        rng (np.random.Generator): Random number generator instance.
         augmentation_counters (Dict[str, int]): Dictionary to count the number of
             augmentations created per identity group.
+        max_augments_per_row (int): Maximum number of augmented samples to
+            create per original row (to limit dataset growth).
+        rng (np.random.Generator): Random number generator instance.
 
     Returns:
         List[Dict[str, Any]]: List of dictionaries representing new augmented rows
@@ -296,8 +310,12 @@ def _generate_cda_for_row(
 
     # Iterate over each detected group and create group-specific augmentations
     for group in present_groups:
+        # Determine the toxicity label index (0 or 1) for augmentation count lookup
+        toxicity_label_index = int(row[label_col])  # assuming binary labels 0/1
+
         # Determine how many augmentations to create for this group
-        n_augment = int(identity_config.get(group, {}).get("n_augment", 0))
+        n_augment = int(identity_config.get(group, {}).get("n_augment", [0, 0])[toxicity_label_index])
+
         if n_augment <= 0:
             continue
 
@@ -320,6 +338,16 @@ def _generate_cda_for_row(
 
             # Update logging counters
             augmentation_counters[group] = augmentation_counters.get(group, 0) + 1
+
+    # Limit the number of augmentations per row to avoid excessive growth
+    if len(augmented_rows) > max_augments_per_row:
+        # Randomly select a subset of augmentations to keep
+        selected_indices = rng.choice(
+            len(augmented_rows),
+            size=max_augments_per_row,
+            replace=False
+        )
+        augmented_rows = [augmented_rows[i] for i in selected_indices]
 
     return augmented_rows
 
