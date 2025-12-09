@@ -58,8 +58,10 @@ def train_lr_tfidf(
 
     Returns:
         Dict[str, Any]: A dictionary containing the trained model and, if calibrated, the uncalibrated model (for evaluation purposes).
+            Additionally, the best hyperparameters found during tuning (if parameter_tuning is True) are included under the key "best_params".
     """
 
+    best_params = None
     if parameter_tuning:
         best_params = find_best_hyperparameters(x_train, y_train)
 
@@ -80,7 +82,8 @@ def train_lr_tfidf(
 
     return {
         "model": model,
-        "uncalibrated_model": lr_model if calibrate else None
+        "uncalibrated_model": lr_model if calibrate else None,
+        "best_params": best_params
     }
 
 def predict_with_model(

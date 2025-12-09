@@ -1,10 +1,21 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Literal
+
 import numpy as np
 import pandas as pd
 import re
+import os
+import sys
 
-#region CDA
+from scipy.sparse import csr_matrix
+from sklearn.linear_model import LogisticRegression
+from fairlearn.reductions import ExponentiatedGradient, DemographicParity, BoundedGroupLoss, ZeroOneLoss
+
+project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+#region Counterfactual Data Augmentation (CDA)
 
 def apply_cda_augmentation(
         df: pd.DataFrame,
@@ -99,6 +110,122 @@ def apply_cda_augmentation(
     combined_df = pd.concat([df, augmented_df], ignore_index=True) # reset index to have a clean continuous index
 
     return combined_df
+
+#endregion
+
+#region Fairness-constrained learning (FCL)
+
+def fit_fairness_constrained_pipeline(
+    train_df: pd.DataFrame,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    identity_cols: List[str],
+    best_params: Optional[Dict[str, Any]] = None,
+    max_iter: int = 5000,
+    constraint_type: Literal["demographic_parity", "bounded_group_loss"] = "demographic_parity",
+    upper_bound: float = 0.3,
+    eg_max_iter: int = 300,
+    random_state: int = 42
+) -> ExponentiatedGradient:
+    """
+    Fit a fairness-constrained logistic regression model on pre-vectorized training data.
+
+    The core logic:
+        - Take the *training* split in two forms:
+              (a) the original DataFrame (for identity information), and
+              (b) the already vectorized feature matrix x_train_vec together
+                  with its binary labels y_train.
+        - Derive a single identity group label per row from the given identity
+          columns (e.g. heterosexual, bisexual, homosexual_gay_or_lesbian,
+          transgender, background).
+        - Train a logistic regression base model under the specified fairness
+          constraint using fairlearn's ExponentiatedGradient reduction, with
+          the identity group labels as sensitive_features.
+        - Return the fitted fairness-constrained classifier. The TF-IDF
+          vectorizer is assumed to be managed outside this function and is not
+          modified here.
+
+    This function is intended to:
+        - Reuse precomputed TF-IDF features (x_train_vec) and labels (y_train)
+          that were saved during the data preparation pipeline, avoiding any
+          repeated calls to fit_transform on the vectorizer.
+        - Implement an in-processing fairness mitigation technique that can be
+          directly compared to the base model trained on the same features.
+        - Keep the global pipeline structure consistent: mitigation is applied
+          only at the model training stage, while validation and test sets
+          remain untouched and are transformed using the previously fitted
+          TF-IDF vectorizer.
+
+    Notes:
+        - The identity_cols argument should contain the same identity columns
+          that are used for subgroup fairness evaluation (e.g. sexual
+          orientation and gender identity groups).
+        - Validation and test data are not passed into this function; they are
+          later evaluated with the returned classifier.
+
+    Args:
+        train_df (pd.DataFrame): DataFrame containing the *training* split,
+            including the identity columns used to derive sensitive_features.
+            The number of rows in train_df must match the number of rows in
+            x_train_vec and y_train.
+        x_train (np.ndarray): Precomputed TF-IDF feature matrix for the
+            training data, as saved in the train_tfidf_bundle joblib file.
+        y_train (np.ndarray): Binary target labels (0/1) for the training data,
+            aligned with x_train_vec.
+        identity_cols (Optional[List[str]]): List of column names corresponding
+            to the identity indicators or scores used to derive the
+            sensitive_features. If None, a ValueError is raised.
+        best_params (Optional[Dict[str, Any]]): Optional dictionary of best
+            hyperparameters for the LogisticRegression base estimator, as
+            obtained from prior hyperparameter tuning. If provided, the
+            parameters 'class_weight', 'C', 'penalty', and 'solver' are taken.
+        max_iter (int): Maximum number of iterations for the LogisticRegression
+            base estimator. Default is 5000. Increased from typical 1000 to help
+            convergence with fairness constraints on imbalanced groups.
+        constraint_type (Literal["demographic_parity", "bounded_group_loss"]):
+            Type of fairness constraint to enforce. Default is "demographic_parity".
+            Use "bounded_group_loss" for datasets with severely imbalanced sensitive
+            feature groups (e.g. when smallest group has <100 samples).
+        upper_bound (float): For BoundedGroupLoss, the maximum acceptable loss
+            difference between demographic groups. Default is 0.3 (30% tolerance).
+            Higher values are more lenient and easier to satisfy with imbalanced groups.
+        eg_max_iter (int): Maximum iterations for ExponentiatedGradient reduction.
+            Default is 300. Increase this if convergence issues persist.
+        random_state (int): Random seed for reproducibility of the
+            fairness-constrained classifier.
+
+    Returns:
+        ExponentiatedGradient: A fitted fairness-constrained classifier that
+            can be used to obtain probabilities and predictions on TF-IDF
+            feature matrices produced by the existing vectorizer.
+    """
+
+    # if train_df.shape[0] != x_train.shape[0] or train_df.shape[0] != y_train.shape[0]:
+    #     raise ValueError(
+    #         "train_df, x_train_vec, and y_train must have the same number of rows."
+    #     )
+
+    sensitive_features = _build_identity_group_labels(
+        df=train_df,
+        identity_cols=identity_cols
+    )
+
+    model = _train_fairness_constrained_logistic_regression(
+        x_train=x_train,
+        y_train=y_train,
+        sensitive_features=sensitive_features,
+        class_weight=best_params["class_weight"] if best_params else "balanced",
+        C=best_params["C"] if best_params else 1.0,
+        penalty=best_params["penalty"] if best_params else "l2",
+        solver=best_params["solver"] if best_params else "lbfgs",
+        max_iter=max_iter,
+        constraint_type=constraint_type,
+        upper_bound=upper_bound,
+        eg_max_iter=eg_max_iter,
+        random_state=random_state
+    )
+
+    return model
 
 #endregion
 
@@ -350,5 +477,143 @@ def _generate_cda_for_row(
         augmented_rows = [augmented_rows[i] for i in selected_indices]
 
     return augmented_rows
+
+#endregion
+
+#region Private helper functions for FCL
+
+def _build_identity_group_labels(
+        df: pd.DataFrame,
+        identity_cols: List[str],
+        threshold: float = 0.5
+) -> pd.Series:
+    """
+    Build a single categorical identity group label per row from multiple identity columns.
+    The function checks each identity column in the specified order, and assigns
+    the first identity that meets or exceeds the threshold. If no identity meets
+    the threshold, the label 'background' is assigned.
+
+    Notes:
+        - The order of identity_cols matters. The first identity that meets
+          the threshold is used.
+        - The threshold can be adapted to align with how identity scores or
+          probabilities are interpreted in the dataset.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing at least the identity
+            columns used to derive the group labels.
+        identity_cols (List[str]): List of column names corresponding to identity
+            indicators or scores (e.g. ["heterosexual", "bisexual", ...]).
+        threshold (float): Threshold above which an identity value is considered
+            present for a row. Defaults to 0.5.
+
+    Returns:
+        pd.Series: A Series of string labels with the same index as df, where
+            each entry is either one of the identity column names or
+            'background'.
+    """
+    labels = []
+
+    for _, row in df[identity_cols].iterrows():
+        label = "background"
+        for col in identity_cols:
+            value = row[col]
+            if value >= threshold:
+                label = col
+                break
+        labels.append(label)
+
+    return pd.Series(labels, index=df.index, name="identity_group")
+
+def _train_fairness_constrained_logistic_regression(
+        x_train: np.ndarray,
+        y_train: np.ndarray,
+        sensitive_features: pd.Series,
+        class_weight: str = "balanced",
+        C: float = 1.0,
+        penalty: Literal["l1", "l2", "elasticnet", None] = "l2",
+        solver: Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"] = "lbfgs",
+        max_iter: int = 5000,
+        constraint_type: Literal["demographic_parity", "bounded_group_loss"] = "demographic_parity",
+        upper_bound: float = 0.3,
+        eg_max_iter: int = 300,
+        random_state: int = 42
+) -> ExponentiatedGradient:
+    """
+    Train a fairness-constrained logistic regression model using ExponentiatedGradient.
+    
+    The ExponentiatedGradient reduction from Fairlearn is used to enforce
+    the specified fairness constraint during training.
+
+    Constraint Types:
+        - "demographic_parity": Enforces equal positive prediction rates across
+          all sensitive groups. Strict and brittle with severely imbalanced groups.
+        - "bounded_group_loss": Penalizes the worst-off group rather than demanding
+          equality. More forgiving for imbalanced groups.
+
+    Notes:
+        - The base estimator remains logistic regression to keep the model
+          family consistent with the base pipeline.
+        - The ExponentiatedGradient reduction optimizes a mixture of models
+          to satisfy the fairness constraints while maintaining performance.
+
+    Args:
+        x_train (np.ndarray): TF-IDF feature matrix for the training data.
+        y_train (np.ndarray): Binary target labels (0/1) for the training data.
+        sensitive_features (pd.Series): One-dimensional Series of identity
+            group labels (e.g. 'background', 'heterosexual', 'bisexual', ...),
+            aligned with x_train and y_train.
+        class_weight (str): Class weight strategy for handling class imbalance.
+        C (float): Inverse regularization strength for the LogisticRegression
+            base estimator. Smaller values specify stronger regularization.
+        penalty (Literal["l1", "l2", "elasticnet", None]): Type of regularization to use.
+        solver (Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"]): Algorithm to use in the optimization problem.
+        max_iter (int): Maximum number of iterations for the LogisticRegression base estimator.
+            Set to 5000 as default to help convergence with fairness constraints on imbalanced groups.
+        constraint_type (Literal["demographic_parity", "bounded_group_loss"]):
+            Type of fairness constraint. Default is "demographic_parity".
+        upper_bound (float): For BoundedGroupLoss, the maximum acceptable loss
+            difference between demographic groups. Default is 0.3 (30% tolerance).
+        eg_max_iter (int): Maximum iterations for ExponentiatedGradient reduction
+            algorithm. Default is 300. Increase if convergence issues persist.
+        random_state (int): Random seed for reproducibility of both the base
+            estimator and the ExponentiatedGradient reduction.
+
+    Returns:
+        ExponentiatedGradient: A fitted fairness-constrained classifier that
+            can be used for predict_proba / predict on TF-IDF feature matrices.
+    """
+
+    base_estimator = LogisticRegression(
+        class_weight=class_weight,
+        C=C,
+        penalty=penalty,
+        solver=solver,
+        max_iter=max_iter,
+        random_state=random_state
+    )
+
+    # Instantiate the appropriate constraint based on constraint_type
+    if constraint_type == "demographic_parity":
+        constraint = DemographicParity()
+    elif constraint_type == "bounded_group_loss":
+        # ZeroOneLoss() is appropriate for binary classification
+        # upper_bound controls tolerance for loss difference between groups
+        constraint = BoundedGroupLoss(loss=ZeroOneLoss(), upper_bound=upper_bound)
+    else:
+        raise ValueError(
+            f"Unknown constraint_type: {constraint_type}. "
+            "Choose from 'demographic_parity' or 'bounded_group_loss'."
+        )
+
+    expo_gradient = ExponentiatedGradient(
+        estimator=base_estimator,
+        constraints=constraint,
+        max_iter=eg_max_iter
+    )
+
+    expo_gradient.fit(x_train, y_train, sensitive_features=sensitive_features)
+
+    return expo_gradient
 
 #endregion
