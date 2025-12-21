@@ -103,7 +103,6 @@ def predict_with_model(
         Tuple[np.ndarray, np.ndarray]: Predicted probabilities and binary labels.
     """
     if isinstance(model, ExponentiatedGradient):
-        print(dir(model))
         # For ExponentiatedGradient, compute weighted average of predict_proba from predictors
         if hasattr(model, 'predictors_') and hasattr(model, 'weights_'):
             probas = np.array([pred.predict_proba(x)[:, 1] for pred in model.predictors_])
