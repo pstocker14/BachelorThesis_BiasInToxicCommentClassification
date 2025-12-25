@@ -80,9 +80,9 @@ def split_dataset(df: pd.DataFrame, identity_cols: list[str]) -> tuple[pd.DataFr
 
     df["label"] = (df["target"] >= 0.5).astype(int) # Create binary label based on target threshold of 0.5
 
-    df["has_identity"] = (df[identity_cols] > 0.5).any(axis=1).astype(int) # Create binary column indicating presence of any identity mention
+    df["has_identity_for_stratification"] = (df[identity_cols] > 0.5).any(axis=1).astype(int) # Create binary column indicating presence of any identity mention
 
-    df["strat_key"] = df["label"].astype(str) + "_" + df["has_identity"].astype(str) # Create stratification key
+    df["strat_key"] = df["label"].astype(str) + "_" + df["has_identity_for_stratification"].astype(str) # Create stratification key
 
     # This gives four possible groups:
     #   0_0 → non-toxic, no identity mention
@@ -98,7 +98,7 @@ def split_dataset(df: pd.DataFrame, identity_cols: list[str]) -> tuple[pd.DataFr
 
     # Drop helper column
     for d in (df, train_data, validation_data, test_data):
-        d.drop(columns=["strat_key", "has_identity", "label"], inplace=True)
+        d.drop(columns=["strat_key", "has_identity_for_stratification", "label"], inplace=True)
 
     # Reset the index of the dataframes
     train_data = train_data.reset_index(drop=True)
@@ -116,9 +116,9 @@ def reduce_dataset_size(
 
     df["label"] = (df["target"] >= 0.5).astype(int) # Create binary label based on target threshold of 0.5
 
-    df["has_identity"] = (df[identity_cols] > 0.5).any(axis=1).astype(int) # Create binary column indicating presence of any identity mention
+    df["has_identity_for_stratification"] = (df[identity_cols] > 0.5).any(axis=1).astype(int) # Create binary column indicating presence of any identity mention
 
-    df["strat_key"] = df["has_identity"].astype(str) # Create stratification key
+    df["strat_key"] = df["has_identity_for_stratification"].astype(str) # Create stratification key
 
     test_size = 1 - (sample_size / len(df)) # Calculate the test size proportion to discard
 
@@ -127,8 +127,7 @@ def reduce_dataset_size(
 
     # Drop helper column
     for d in (df, sampled_df, discarded_df):
-        d.drop(columns=["strat_key", "has_identity", "label"], inplace=True)
-
+        d.drop(columns=["strat_key", "has_identity_for_stratification", "label"], inplace=True)
     # Reset the index of the dataframes
     sampled_df = sampled_df.reset_index(drop=drop_index) # let caller decide to keep original index as a column called 'index'
     discarded_df = discarded_df.reset_index(drop=drop_index)

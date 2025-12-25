@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, Tuple, Iterable
+from typing import Dict, Any, Optional, Tuple, Iterable
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -135,6 +135,7 @@ def rate_gaps_equalized_odds(
         subgroup_col: str,
         label_col: str = "labelled_as_toxic",
         y_proba_col: str = "predicted_proba",
+        y_pred_col: Optional[str] = None,
         threshold: float = 0.5,
         subgroup_mention_threshold: float = 0.5,
         min_pos: int = 5,
@@ -148,8 +149,11 @@ def rate_gaps_equalized_odds(
         subgroup_col (str): Column name for the subgroup indicator (boolean).
         label_col (str): Column name for the true labels.
         y_proba_col (str): Column name for the predicted probabilities.
+        y_pred_col (Optional[str]): Column name for the predicted labels. If None, labels are derived from probabilities.
+        threshold (float): Decision threshold for classification. (used if y_pred_col is None)
         subgroup_mention_threshold (float): Threshold for considering subgroup mentions.
-
+        min_pos (int): Minimum number of positive examples required to compute rates.
+        min_neg (int): Minimum number of negative examples required to compute rates.
     Returns:
         Dict[str, float]: Dictionary containing FPR/FNR for subgroup/background and their gaps (sg - bg).
     """
@@ -161,7 +165,8 @@ def rate_gaps_equalized_odds(
             return (np.nan, np.nan)
         
         y_true = np.asarray(data[label_col].values)
-        y_pred = (np.asarray(data[y_proba_col].values) >= threshold).astype(int)
+        # use predicted labels if provided, else derive from predicted probabilities
+        y_pred = np.asarray(data[y_pred_col].values) if y_pred_col else (np.asarray(data[y_proba_col].values) >= threshold).astype(int)
         
         n_pos = int((y_true == 1).sum())
         n_neg = int((y_true == 0).sum())
@@ -201,6 +206,7 @@ def evaluate_subgroups(
     subgroup_cols: Iterable[str],
     label_col: str = "labelled_as_toxic",
     y_proba_col: str = "predicted_proba",
+    y_pred_col: Optional[str] = None,
     threshold: float = 0.5,
     subgroup_mention_threshold: float = 0.5
 ) -> pd.DataFrame:
@@ -213,8 +219,9 @@ def evaluate_subgroups(
         subgroup_cols (Iterable[str]): List of subgroup column names.
         label_col (str): Column name for the true labels.
         y_proba_col (str): Column name for the predicted probabilities.
+        y_pred_col (Optional[str]): Column name for the predicted labels (used for rate gaps). If None, labels are derived from probabilities.
         threshold (float): Decision threshold for classification.
-        mention_threshold (float): Threshold for considering subgroup mentions.
+        subgroup_mention_threshold (float): Threshold for considering subgroup mentions.
     """
     rows = []
     for col in subgroup_cols:
@@ -230,7 +237,7 @@ def evaluate_subgroups(
             "bpsn_auc": bpsn_auc(df, col, label_col, y_proba_col, subgroup_mention_threshold),
             "bnsp_auc": bnsp_auc(df, col, label_col, y_proba_col, subgroup_mention_threshold)
         }
-        row.update(rate_gaps_equalized_odds(df, col, label_col, y_proba_col, threshold, subgroup_mention_threshold))
+        row.update(rate_gaps_equalized_odds(df, col, label_col, y_proba_col, y_pred_col, threshold, subgroup_mention_threshold))
         rows.append(row)
 
     out = pd.DataFrame(rows)

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Tuple
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ import sys
 from scipy.sparse import csr_matrix
 from sklearn.linear_model import LogisticRegression
 from fairlearn.reductions import ExponentiatedGradient, DemographicParity, BoundedGroupLoss, ZeroOneLoss
+from fairlearn.postprocessing import ThresholdOptimizer
 
 project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
 if project_root not in sys.path:
@@ -226,6 +227,214 @@ def fit_fairness_constrained_pipeline(
     )
 
     return model
+
+#endregion
+
+#region Equalized Odds post-processing (EO)
+
+def fit_equalized_odds_postprocessor(
+    y_val: np.ndarray,
+    y_val_proba: np.ndarray,
+    val_df: pd.DataFrame,
+    sensitive_attribute: Literal["gender", "sexual_orientation"] = "sexual_orientation",
+    identity_threshold: float = 0.5,
+    base_threshold: float = 0.5,
+    random_state: int = 42
+) -> Dict[str, Any]:
+    """
+    Fit a Fairlearn Equalized Odds post-processor on validation predictions and labels.
+
+    The core logic:
+        - Derive sensitive group labels from val_df for the requested sensitive_attribute
+        - Filter validation rows to the subset that is eligible for the EO definition
+        - Fit ThresholdOptimizer(constraints="equalized_odds") using precomputed probabilities
+        - Return a reusable postprocessor bundle that can be applied to validation/test later
+
+    Equalized Odds is intended to:
+        reduce disparities in error rates (true positive rate and false positive rate)
+        across the specified sensitive groups, without retraining the base classifier.
+
+    Notes:
+        - This method integrates into the global pipeline as a post-processing stage:
+          it must be fitted on validation only and then applied to validation/test predictions.
+        - The base classifier is not retrained and TF–IDF features are not modified.
+        - Validation/test raw texts must not be augmented or altered.
+        - This implementation produces hard labels via ThresholdOptimizer.predict(...);
+          additional thresholding is therefore unnecessary for included rows.
+
+    Args:
+        y_val (np.ndarray): Binary validation labels (0/1), shape (n_samples,).
+        y_val_proba (np.ndarray): Base model positive-class probabilities for validation,
+            shape (n_samples,), values in [0, 1].
+        val_df (pd.DataFrame): Validation DataFrame containing identity columns used to derive
+            sensitive group labels.
+        sensitive_attribute (Literal): Either "gender" or "sexual_orientation". Defaults to "sexual_orientation".
+        identity_threshold (float): Threshold above which an identity is treated as present. Defaults to 0.5.
+        base_threshold (float): Fallback threshold used for rows excluded from EO application. Defaults to 0.5.
+        random_state (int): Random seed used for reproducible randomized predictions.
+
+    Returns:
+        Dict[str, Any]: A postprocessor bundle containing:
+            - "postprocessor": fitted ThresholdOptimizer
+            - "sensitive_attribute": configuration string
+            - "identity_threshold": used threshold for identity presence
+            - "base_threshold": fallback threshold for excluded rows
+            - "random_state": seed for reproducibility
+            - "fit_included_count": number of included rows used to fit EO
+            - "fit_excluded_count": number of excluded rows not used to fit EO
+    """
+    y_val = np.asarray(y_val).reshape(-1)
+    y_val_proba = np.asarray(y_val_proba).reshape(-1)
+
+    # Validate input dimensions (sanity check)
+    if len(y_val) != len(y_val_proba) or len(y_val) != len(val_df):
+        raise ValueError("y_val, y_val_proba, and val_df must have the same number of rows.")
+
+    # Derive sensitive features and inclusion mask based on chosen attribute
+    if sensitive_attribute == "gender":
+        sensitive, include_mask = _derive_gender_sensitive_features(df=val_df, threshold=identity_threshold)
+    elif sensitive_attribute == "sexual_orientation":
+        sensitive, include_mask = _derive_orientation_sensitive_features(df=val_df, threshold=identity_threshold)
+
+    # Filter to included rows for EO fitting
+    included_idx = include_mask.values
+    excluded_count = int((~included_idx).sum())
+    included_count = int(included_idx.sum())
+
+    # Ensure there are included rows to fit EO on
+    if included_count == 0:
+        raise ValueError("No rows are eligible for EO fitting under the chosen sensitive attribute definition.")
+
+    sensitive_included = sensitive.loc[include_mask]
+
+    # Logging
+    print("Fitting Equalized Odds post-processor")
+    print(f"  sensitive_attribute: {sensitive_attribute}")
+    print(f"  identity_threshold: {identity_threshold}")
+    print(f"  included rows: {included_count}")
+    print(f"  excluded rows: {excluded_count}")
+
+    # Fit ThresholdOptimizer with precomputed probabilities
+    estimator = _PrecomputedProbaEstimator()
+    postprocessor = ThresholdOptimizer(
+        estimator=estimator,
+        constraints="equalized_odds",
+        objective="accuracy_score",
+        prefit=True, # We provide precomputed probabilities
+        predict_method="predict_proba"
+    )
+
+    # create input for fitting in the shape (n_samples, 1)
+    x_fit = y_val_proba[included_idx].reshape(-1, 1)
+
+    # X is the probability vector; estimator.predict_proba(X) simply returns those probabilities
+    postprocessor.fit(
+        x_fit,
+        y_val[included_idx],
+        sensitive_features=sensitive_included
+    )
+
+    bundle = {
+        "postprocessor": postprocessor,
+        "sensitive_attribute": sensitive_attribute,
+        "identity_threshold": identity_threshold,
+        "base_threshold": base_threshold,
+        "random_state": random_state,
+        "fit_included_count": included_count,
+        "fit_excluded_count": excluded_count
+    }
+    return bundle
+
+def apply_equalized_odds_postprocessor(
+    postprocessor_bundle: Dict[str, Any],
+    y_proba: np.ndarray,
+    df: pd.DataFrame
+) -> np.ndarray:
+    """
+    Apply a fitted Equalized Odds post-processor to probability predictions.
+
+    The core logic:
+        - Derive sensitive group labels from df for the configured sensitive_attribute
+        - Apply ThresholdOptimizer.predict(...) to rows eligible for EO
+        - For excluded rows, fall back to base thresholding (y_proba >= base_threshold)
+        - Return a full-length prediction vector aligned with the input rows
+
+    Equalized Odds is intended to:
+        adjust final decisions to reduce group disparities in true/false positive rates,
+        while leaving the base classifier and feature representation unchanged.
+
+    Notes:
+        - This method integrates into the global pipeline after the base model has produced
+          probabilities for validation/test.
+        - It must not retrain the base classifier and must not modify TF–IDF or raw texts.
+        - ThresholdOptimizer.predict(...) returns hard labels for included rows, so additional
+          thresholding is not applied there.
+        - Excluded rows are handled explicitly to ensure downstream evaluation can operate
+          on the full dataset.
+
+    Args:
+        postprocessor_bundle (Dict[str, Any]): Output of fit_equalized_odds_postprocessor(...).
+        y_proba (np.ndarray): Base model positive-class probabilities for the given split,
+            shape (n_samples,), values in [0, 1].
+        df (pd.DataFrame): DataFrame for the given split containing identity columns used to
+            derive sensitive group labels.
+
+    Returns:
+        np.ndarray: Hard-label predictions (0/1) for all rows, shape (n_samples,).
+    """
+    # Unpack postprocessor bundle
+    postprocessor = postprocessor_bundle["postprocessor"]
+    sensitive_attribute = str(postprocessor_bundle.get("sensitive_attribute", "sexual_orientation"))
+    identity_threshold = float(postprocessor_bundle.get("identity_threshold", 0.5))
+    base_threshold = float(postprocessor_bundle.get("base_threshold", 0.5))
+    rs = postprocessor_bundle.get("random_state", 42)
+
+    # Prepare input probabilities
+    y_proba = np.asarray(y_proba).reshape(-1)
+
+    # Validate input dimensions (sanity check)
+    if len(y_proba) != len(df):
+        raise ValueError("y_proba and df must have the same number of rows.")
+
+    # Derive sensitive features and inclusion mask based on chosen attribute
+    if sensitive_attribute == "gender":
+        sensitive, include_mask = _derive_gender_sensitive_features(df=df, threshold=identity_threshold)
+    elif sensitive_attribute == "sexual_orientation":
+        sensitive, include_mask = _derive_orientation_sensitive_features(df=df, threshold=identity_threshold)
+
+    # Filter to included rows for EO application
+    included_idx = include_mask.values
+    included_count = int(included_idx.sum())
+    excluded_count = int((~included_idx).sum())
+
+    # Logging
+    print("Applying Equalized Odds post-processor")
+    print(f"  sensitive_attribute: {sensitive_attribute}")
+    print(f"  identity_threshold: {identity_threshold}")
+    print(f"  included rows: {included_count}")
+    print(f"  excluded rows (fallback thresholding): {excluded_count}")
+    print(f"  fallback base_threshold: {base_threshold}")
+
+    # Initialize prediction array with fallback thresholding
+    y_pred = (y_proba >= base_threshold).astype(int)
+
+    # Apply EO post-processor to included rows
+    if included_count > 0:
+        # Get EO-adjusted predictions for included rows
+        sensitive_included = sensitive.loc[include_mask]
+
+        # create input for fitting in the shape (n_samples, 1)
+        x_fit = y_proba[included_idx].reshape(-1, 1)
+        y_pred_included = postprocessor.predict(
+            x_fit,
+            sensitive_features=sensitive_included,
+            random_state=rs
+        )
+
+        # Overwrite included rows with EO predictions
+        y_pred[included_idx] = np.asarray(y_pred_included).astype(int)
+
+    return y_pred
 
 #endregion
 
@@ -617,3 +826,106 @@ def _train_fairness_constrained_logistic_regression(
     return expo_gradient
 
 #endregion
+
+# region Private helper functions/classes for EO (post-processing)
+
+class _PrecomputedProbaEstimator:
+    """
+    Minimal estimator wrapper that treats X as a precomputed probability vector.
+
+    ThresholdOptimizer expects an estimator and will call predict_proba(X) when
+    predict_method='predict_proba'. This wrapper enables fitting and predicting
+    purely from already computed probabilities (without retraining a base model).
+    """
+
+    def fit(self, X: Any, y: Any, **kwargs: Any) -> "_PrecomputedProbaEstimator":
+        return self # no-op fit
+
+    # Format X as 2D array with shape (n_samples, 2) for predict_proba
+    # where column 0 is prob of class 0 and column 1 is prob of class 1
+    # This is done because the input X is assumed to be a 1D array of probabilities for class 1
+    def predict_proba(self, X: Any) -> np.ndarray:
+        x = np.asarray(X).reshape(-1)
+        x = np.clip(x, 0.0, 1.0)
+        return np.column_stack([1.0 - x, x])
+    
+def _derive_gender_sensitive_features(
+    df: pd.DataFrame,
+    threshold: float = 0.5
+) -> Tuple[pd.Series, pd.Series]:
+    """
+    Derive sensitive features for gender Equalized Odds (female vs male only).
+
+    Args:
+        df (pd.DataFrame): DataFrame containing at least the columns "female" and "male"
+        threshold (float): threshold above which an identity value is considered present for a row
+
+    Returns:
+        sensitive_features: values in {"female", "male"} for included rows; "excluded" otherwise
+        include_mask: True for rows included in EO fitting/application
+    """
+    # Create boolean flags for gender identities based on threshold
+    female_flag = (df["female"] > threshold)
+    male_flag = (df["male"] > threshold)
+
+    both_flag = female_flag & male_flag
+    any_flag = female_flag | male_flag
+
+    # Rows to include (only one of gender flags is True)
+    include_mask = any_flag & (~both_flag)
+
+    # Create sensitive feature Series with "excluded" default
+    sensitive = pd.Series("excluded", index=df.index, name="sensitive_gender")
+    sensitive.loc[female_flag & include_mask] = "female"
+    sensitive.loc[male_flag & include_mask] = "male"
+
+    print("Equalized Odds sensitive feature derivation (gender)")
+    print(f"  included female: {int((sensitive == 'female').sum())}")
+    print(f"  included male: {int((sensitive == 'male').sum())}")
+    print(f"  excluded none: {int((~any_flag).sum())}")
+    print(f"  excluded both: {int(both_flag.sum())}")
+
+    return sensitive, include_mask
+
+def _derive_orientation_sensitive_features(
+    df: pd.DataFrame,
+    threshold: float = 0.5
+) -> Tuple[pd.Series, pd.Series]:
+    """
+    Derive sensitive features for sexual orientation Equalized Odds:
+    homosexual_gay_or_lesbian, transgender vs background (no identity mention at all).
+
+    Args:
+        df (pd.DataFrame): DataFrame containing at least the column "homosexual_gay_or_lesbian" and "has_identity"
+        threshold (float): threshold above which an identity value is considered present for a row
+
+    Returns:
+        sensitive_features: values in {"homosexual_gay_or_lesbian", "transgender", "background"} for included rows;
+            "excluded" otherwise
+        include_mask: True for rows included in EO fitting/application
+    """
+    # Create boolean flags for sexual orientation identities based on threshold
+    has_any_identity = (df["has_identity"]).astype(bool)
+    hgl_flag = df["homosexual_gay_or_lesbian"] > threshold
+    trans_flag = df["transgender"] > threshold
+
+    background_flag = ~has_any_identity
+
+    # Rows to include (either hgl, trans, or background)
+    include_mask = hgl_flag | trans_flag | background_flag
+
+    # Create sensitive feature Series with "excluded" default
+    sensitive = pd.Series("excluded", index=df.index, name="sensitive_orientation")
+    sensitive.loc[hgl_flag] = "homosexual_gay_or_lesbian"
+    sensitive.loc[trans_flag] = "transgender"
+    sensitive.loc[background_flag] = "background"
+
+    print("Equalized Odds sensitive feature derivation (sexual orientation)")
+    print(f"  included homosexual_gay_or_lesbian: {int((sensitive == 'homosexual_gay_or_lesbian').sum())}")
+    print(f"  included transgender: {int((sensitive == 'transgender').sum())}")
+    print(f"  included background (no identity mention): {int((sensitive == 'background').sum())}")
+    print(f"  excluded other identity mentions: {int((sensitive == 'excluded').sum())}")
+
+    return sensitive, include_mask
+
+# endregion
