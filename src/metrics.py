@@ -1,11 +1,19 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional, Tuple, Iterable
+from typing import Dict, Any, Optional, Tuple, Iterable, Sequence
 import numpy as np
 import pandas as pd
+import sys
+import os
+import joblib
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, average_precision_score, confusion_matrix
 )
+
+# Automatically add project root to path so other folders are accessible
+project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 #region Overall metrics computation
 
@@ -299,3 +307,39 @@ def _calculate_safe_auc(
         return np.nan
 
 #endregion
+
+def create_result_df(
+    metric: str,
+    subgroups: Sequence[str] = ["homosexual_gay_or_lesbian", "transgender", "bisexual"],
+    models: Sequence[str] = ["baseline", "cda", "fcl", "eo"]
+) -> pd.DataFrame:
+    frames = []
+    
+    for model in models:
+        path = project_root + "/results/"
+
+        if model == "baseline":
+            path += "tfidf_base_model_subgroup_metrics.joblib"
+        elif model == "cda":
+            path += "tfidf_cda_model_subgroup_metrics.joblib"
+        elif model == "fcl":
+            path += "tfidf_fcl_model_subgroup_metrics.joblib"
+        elif model == "eo":
+            path += "tfidf_eo_sexual_orientation_subgroup_metrics.joblib"
+        else:
+            raise ValueError("Model name is not defined.")
+        
+        metrics_df = joblib.load(path)
+        df = pd.DataFrame()
+
+        df["subgroup"] = metrics_df["subgroup"]
+        df[metric] = metrics_df[metric]
+        df["model"] = model
+
+        frames.append(df)
+
+    df = pd.concat(frames, ignore_index=True)
+    df = df[df["subgroup"].isin(subgroups)]
+
+    return df
+

@@ -6,7 +6,6 @@ data/processed/*.npy
 data/processed/*.csv
 data/processed/*.parquet
 models/*
-figures/*.svg
 
 # Jupyter
 .ipynb_checkpoints/

@@ -908,21 +908,24 @@ def _derive_orientation_sensitive_features(
     has_any_identity = (df["has_identity"]).astype(bool)
     hgl_flag = df["homosexual_gay_or_lesbian"] > threshold
     trans_flag = df["transgender"] > threshold
+    bisexual_flag = df["bisexual"] > threshold
 
     background_flag = ~has_any_identity
 
-    # Rows to include (either hgl, trans, or background)
-    include_mask = hgl_flag | trans_flag | background_flag
+    # Rows to include (either hgl, trans, bisexual, or background)
+    include_mask = hgl_flag | trans_flag | bisexual_flag | background_flag
 
     # Create sensitive feature Series with "excluded" default
     sensitive = pd.Series("excluded", index=df.index, name="sensitive_orientation")
     sensitive.loc[hgl_flag] = "homosexual_gay_or_lesbian"
     sensitive.loc[trans_flag] = "transgender"
+    sensitive.loc[bisexual_flag] = "bisexual"
     sensitive.loc[background_flag] = "background"
 
     print("Equalized Odds sensitive feature derivation (sexual orientation)")
     print(f"  included homosexual_gay_or_lesbian: {int((sensitive == 'homosexual_gay_or_lesbian').sum())}")
     print(f"  included transgender: {int((sensitive == 'transgender').sum())}")
+    print(f"  included bisexual: {int((sensitive == 'bisexual').sum())}")
     print(f"  included background (no identity mention): {int((sensitive == 'background').sum())}")
     print(f"  excluded other identity mentions: {int((sensitive == 'excluded').sum())}")
 
