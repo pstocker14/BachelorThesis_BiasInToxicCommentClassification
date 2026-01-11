@@ -7,6 +7,7 @@ from sklearn.linear_model import LogisticRegression as LR
 from sklearn.calibration import CalibratedClassifierCV as CCCV
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.metrics import f1_score
+from fairlearn.reductions import ExponentiatedGradient
 
 CV = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -58,8 +59,10 @@ def train_lr_tfidf(
 
     Returns:
         Dict[str, Any]: A dictionary containing the trained model and, if calibrated, the uncalibrated model (for evaluation purposes).
+            Additionally, the best hyperparameters found during tuning (if parameter_tuning is True) are included under the key "best_params".
     """
 
+    best_params = None
     if parameter_tuning:
         best_params = find_best_hyperparameters(x_train, y_train)
 
@@ -80,7 +83,8 @@ def train_lr_tfidf(
 
     return {
         "model": model,
-        "uncalibrated_model": lr_model if calibrate else None
+        "uncalibrated_model": lr_model if calibrate else None,
+        "best_params": best_params
     }
 
 def predict_with_model(
@@ -98,7 +102,16 @@ def predict_with_model(
     Returns:
         Tuple[np.ndarray, np.ndarray]: Predicted probabilities and binary labels.
     """
-    y_proba = model.predict_proba(x)[:, 1]  # Probability of the positive class
+    if isinstance(model, ExponentiatedGradient):
+        # For ExponentiatedGradient, compute weighted average of predict_proba from predictors
+        if hasattr(model, 'predictors_') and hasattr(model, 'weights_'):
+            probas = np.array([pred.predict_proba(x)[:, 1] for pred in model.predictors_])
+            y_proba = np.average(probas, weights=model.weights_, axis=0)
+        else:
+            raise AttributeError("ExponentiatedGradient model does not have 'predictors_' or 'weights_' attributes. Ensure the model is fitted and fairlearn version supports these attributes.")
+    else:
+        y_proba = model.predict_proba(x)[:, 1]  # Probability of the positive class
+
     y_pred = (y_proba >= threshold).astype(int) # Convert probabilities to binary labels based on the threshold
     
     return (y_proba, y_pred)

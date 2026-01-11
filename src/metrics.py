@@ -1,11 +1,19 @@
 from __future__ import annotations
-from typing import Dict, Any, Tuple, Iterable
+from typing import Dict, Any, Optional, Tuple, Iterable, Sequence
 import numpy as np
 import pandas as pd
+import sys
+import os
+import joblib
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, average_precision_score, confusion_matrix
 )
+
+# Automatically add project root to path so other folders are accessible
+project_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 #region Overall metrics computation
 
@@ -135,6 +143,7 @@ def rate_gaps_equalized_odds(
         subgroup_col: str,
         label_col: str = "labelled_as_toxic",
         y_proba_col: str = "predicted_proba",
+        y_pred_col: Optional[str] = None,
         threshold: float = 0.5,
         subgroup_mention_threshold: float = 0.5,
         min_pos: int = 5,
@@ -148,8 +157,11 @@ def rate_gaps_equalized_odds(
         subgroup_col (str): Column name for the subgroup indicator (boolean).
         label_col (str): Column name for the true labels.
         y_proba_col (str): Column name for the predicted probabilities.
+        y_pred_col (Optional[str]): Column name for the predicted labels. If None, labels are derived from probabilities.
+        threshold (float): Decision threshold for classification. (used if y_pred_col is None)
         subgroup_mention_threshold (float): Threshold for considering subgroup mentions.
-
+        min_pos (int): Minimum number of positive examples required to compute rates.
+        min_neg (int): Minimum number of negative examples required to compute rates.
     Returns:
         Dict[str, float]: Dictionary containing FPR/FNR for subgroup/background and their gaps (sg - bg).
     """
@@ -161,7 +173,8 @@ def rate_gaps_equalized_odds(
             return (np.nan, np.nan)
         
         y_true = np.asarray(data[label_col].values)
-        y_pred = (np.asarray(data[y_proba_col].values) >= threshold).astype(int)
+        # use predicted labels if provided, else derive from predicted probabilities
+        y_pred = np.asarray(data[y_pred_col].values) if y_pred_col else (np.asarray(data[y_proba_col].values) >= threshold).astype(int)
         
         n_pos = int((y_true == 1).sum())
         n_neg = int((y_true == 0).sum())
@@ -201,6 +214,7 @@ def evaluate_subgroups(
     subgroup_cols: Iterable[str],
     label_col: str = "labelled_as_toxic",
     y_proba_col: str = "predicted_proba",
+    y_pred_col: Optional[str] = None,
     threshold: float = 0.5,
     subgroup_mention_threshold: float = 0.5
 ) -> pd.DataFrame:
@@ -213,8 +227,9 @@ def evaluate_subgroups(
         subgroup_cols (Iterable[str]): List of subgroup column names.
         label_col (str): Column name for the true labels.
         y_proba_col (str): Column name for the predicted probabilities.
+        y_pred_col (Optional[str]): Column name for the predicted labels (used for rate gaps). If None, labels are derived from probabilities.
         threshold (float): Decision threshold for classification.
-        mention_threshold (float): Threshold for considering subgroup mentions.
+        subgroup_mention_threshold (float): Threshold for considering subgroup mentions.
     """
     rows = []
     for col in subgroup_cols:
@@ -230,7 +245,7 @@ def evaluate_subgroups(
             "bpsn_auc": bpsn_auc(df, col, label_col, y_proba_col, subgroup_mention_threshold),
             "bnsp_auc": bnsp_auc(df, col, label_col, y_proba_col, subgroup_mention_threshold)
         }
-        row.update(rate_gaps_equalized_odds(df, col, label_col, y_proba_col, threshold, subgroup_mention_threshold))
+        row.update(rate_gaps_equalized_odds(df, col, label_col, y_proba_col, y_pred_col, threshold, subgroup_mention_threshold))
         rows.append(row)
 
     out = pd.DataFrame(rows)
@@ -292,3 +307,39 @@ def _calculate_safe_auc(
         return np.nan
 
 #endregion
+
+def create_result_df(
+    metric: str,
+    subgroups: Sequence[str] = ["homosexual_gay_or_lesbian", "transgender", "bisexual"],
+    models: Sequence[str] = ["baseline", "cda", "fcl", "eo"]
+) -> pd.DataFrame:
+    frames = []
+    
+    for model in models:
+        path = project_root + "/results/"
+
+        if model == "baseline":
+            path += "tfidf_base_model_subgroup_metrics.joblib"
+        elif model == "cda":
+            path += "tfidf_cda_model_subgroup_metrics.joblib"
+        elif model == "fcl":
+            path += "tfidf_fcl_model_subgroup_metrics.joblib"
+        elif model == "eo":
+            path += "tfidf_eo_sexual_orientation_subgroup_metrics.joblib"
+        else:
+            raise ValueError("Model name is not defined.")
+        
+        metrics_df = joblib.load(path)
+        df = pd.DataFrame()
+
+        df["subgroup"] = metrics_df["subgroup"]
+        df[metric] = metrics_df[metric]
+        df["model"] = model
+
+        frames.append(df)
+
+    df = pd.concat(frames, ignore_index=True)
+    df = df[df["subgroup"].isin(subgroups)]
+
+    return df
+

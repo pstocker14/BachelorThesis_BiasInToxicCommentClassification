@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict
+from typing import Dict, Tuple, Sequence, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,6 +7,14 @@ from sklearn.metrics import (
     roc_curve, roc_auc_score, precision_recall_curve,
     average_precision_score, confusion_matrix
 )
+
+DEFAULT_MODEL_ORDER = ["baseline", "cda", "fcl", "eo"]
+
+# Your main evaluation focus
+DEFAULT_TARGET_LGBTQ = ["homosexual_gay_or_lesbian", "transgender", "bisexual"]
+
+# Context-only controls (optional)
+DEFAULT_CONTEXT = ["female", "male", "heterosexual"]
 
 #region Performance visualizations
 
@@ -183,3 +191,75 @@ def print_small_sample_warnings(df_metrics: pd.DataFrame, min_rows: int = 50, mi
             print(f"[WARN] {r['subgroup']}: small sample -> " + ", ".join(msgs))
 
 #endregion
+
+# region Final thesis visualizations
+
+def plot_grouped_bars_by_model(
+    result_df: pd.DataFrame,
+    metric: str,
+    subgroups: Sequence[str] = DEFAULT_TARGET_LGBTQ,
+    model_order: Sequence[str] = DEFAULT_MODEL_ORDER,
+    pretty_model_names: Optional[Dict[str, str]] = None,
+    title: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    figsize: Tuple[float, float] = (10, 5),
+    rotate_xticks: int = 25,
+) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Generic grouped bar plot: x=subgroup, bars=model, y=metric.
+
+    Parameters
+    ----------
+    bias_long:
+        Long DataFrame from make_long_bias_df() with columns:
+        ['model', 'subgroup', metric, ...]
+    metric:
+        Column name to plot (e.g. 'gap_fpr', 'sg_fpr', 'sg_fnr')
+    subgroups:
+        Subgroup order on the x-axis.
+    model_order:
+        Model order in the legend and bar grouping.
+    pretty_subgroup_names / pretty_model_names:
+        Optional display name maps.
+    """
+
+    # Filter
+    d = result_df[result_df["subgroup"].isin(subgroups)].copy()
+
+    # Pivot to (subgroup x model)
+    pivot = (
+        d.pivot_table(index="subgroup", columns="model", values=metric, aggfunc="first")
+        .reindex(index=list(subgroups))
+    )
+
+    # Keep only requested model columns that exist
+    model_cols = [m for m in model_order if m in pivot.columns]
+    pivot = pivot[model_cols]
+
+    x = np.arange(len(subgroups))
+    n_models = max(1, len(model_cols))
+    total_width = 0.8
+    width = total_width / n_models
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for i, model in enumerate(model_cols):
+        vals = pivot[model].values
+        offsets = x - (total_width / 2) + (i + 0.5) * width
+        label = pretty_model_names.get(model, model) if pretty_model_names else model
+        ax.bar(offsets, vals, width, label=label)
+
+    xtick_labels = list(subgroups)
+    ax.set_xticks(x)
+    ax.set_xticklabels(xtick_labels, rotation=rotate_xticks, ha="right")
+
+    ax.axhline(0.0, linewidth=1)
+
+    ax.set_ylabel(ylabel or metric)
+    ax.set_title(title or f"{metric} by subgroup and model")
+    ax.legend()
+
+    fig.tight_layout()
+    return fig, ax
+
+# endregion
