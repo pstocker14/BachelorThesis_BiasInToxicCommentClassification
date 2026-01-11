@@ -8,9 +8,10 @@ from sklearn.metrics import (
     average_precision_score, confusion_matrix
 )
 
+# Default model order for combined plots
 DEFAULT_MODEL_ORDER = ["baseline", "cda", "fcl", "eo"]
 
-# Your main evaluation focus
+# The thesis' main evaluation focus
 DEFAULT_TARGET_LGBTQ = ["homosexual_gay_or_lesbian", "transgender", "bisexual"]
 
 # Context-only controls (optional)
@@ -65,7 +66,7 @@ def plot_roc_curve(y_true: np.ndarray, y_proba: np.ndarray, title="ROC Curve"):
 
 def plot_pr_curve(y_true: np.ndarray, y_proba: np.ndarray, title="Precision–Recall Curve"):
     """
-    Plot Precision–Recall curve and display Average Precision.
+    Plot Precision-Recall curve and display Average Precision.
 
     Args:
         y_true (np.ndarray): True binary labels.
@@ -208,19 +209,16 @@ def plot_grouped_bars_by_model(
     """
     Generic grouped bar plot: x=subgroup, bars=model, y=metric.
 
-    Parameters
-    ----------
-    bias_long:
-        Long DataFrame from make_long_bias_df() with columns:
-        ['model', 'subgroup', metric, ...]
-    metric:
-        Column name to plot (e.g. 'gap_fpr', 'sg_fpr', 'sg_fnr')
-    subgroups:
-        Subgroup order on the x-axis.
-    model_order:
-        Model order in the legend and bar grouping.
-    pretty_subgroup_names / pretty_model_names:
-        Optional display name maps.
+    Args:
+        result_df (pd.DataFrame): DataFrame with columns: 'subgroup', 'model', metric.
+        metric (str): Metric column to plot.
+        subgroups (Sequence[str]): List of subgroups to include.
+        model_order (Sequence[str]): Order of models for bars.
+        pretty_model_names (Optional[Dict[str, str]]): Mapping for prettier model names.
+        title (Optional[str]): Plot title.
+        ylabel (Optional[str]): Y-axis label.
+        figsize (Tuple[float, float]): Figure size.
+        rotate_xticks (int): Rotation angle for x-tick labels.
     """
 
     # Filter

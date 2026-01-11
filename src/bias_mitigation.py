@@ -7,7 +7,6 @@ import re
 import os
 import sys
 
-from scipy.sparse import csr_matrix
 from sklearn.linear_model import LogisticRegression
 from fairlearn.reductions import ExponentiatedGradient, DemographicParity, BoundedGroupLoss, ZeroOneLoss
 from fairlearn.postprocessing import ThresholdOptimizer
@@ -43,7 +42,7 @@ def apply_cda_augmentation(
         - enforce (approximate) prediction invariance with respect to identity.
 
     Notes:
-        - This function is typically applied to the *training* set only.
+        - This function is applied to the *training* set only.
         - The default identity configuration and augmentation strengths are based
           on the subgroup metrics computed earlier on the base model, prioritizing highly
           biased or underrepresented subgroups.
@@ -80,11 +79,13 @@ def apply_cda_augmentation(
 
     augmented_rows = []
 
+    # Process each row in the DataFrame
     for _, row in df.iterrows():
         # Skip rows with missing text.
         if pd.isna(row[text_col]):
             continue
 
+        # Generate CDA-augmented samples for the current row.
         new_rows = _generate_cda_for_row(
             row=row,
             text_col=text_col,
@@ -201,20 +202,18 @@ def fit_fairness_constrained_pipeline(
             feature matrices produced by the existing vectorizer.
     """
 
-    # if train_df.shape[0] != x_train.shape[0] or train_df.shape[0] != y_train.shape[0]:
-    #     raise ValueError(
-    #         "train_df, x_train_vec, and y_train must have the same number of rows."
-    #     )
-
+    # Derive sensitive group labels from the training DataFrame
     sensitive_features = _build_identity_group_labels(
         df=train_df,
         identity_cols=identity_cols
     )
 
+    # Train the fairness-constrained logistic regression model
     model = _train_fairness_constrained_logistic_regression(
         x_train=x_train,
         y_train=y_train,
         sensitive_features=sensitive_features,
+        # use best hyperparameters if provided, else defaults
         class_weight=best_params["class_weight"] if best_params else "balanced",
         C=best_params["C"] if best_params else 1.0,
         penalty=best_params["penalty"] if best_params else "l2",
@@ -257,7 +256,7 @@ def fit_equalized_odds_postprocessor(
     Notes:
         - This method integrates into the global pipeline as a post-processing stage:
           it must be fitted on validation only and then applied to validation/test predictions.
-        - The base classifier is not retrained and TF–IDF features are not modified.
+        - The base classifier is not retrained and TF-IDF features are not modified.
         - Validation/test raw texts must not be augmented or altered.
         - This implementation produces hard labels via ThresholdOptimizer.predict(...);
           additional thresholding is therefore unnecessary for included rows.
@@ -324,7 +323,7 @@ def fit_equalized_odds_postprocessor(
         predict_method="predict_proba"
     )
 
-    # create input for fitting in the shape (n_samples, 1)
+    # Create input for fitting in the shape (n_samples, 1)
     x_fit = y_val_proba[included_idx].reshape(-1, 1)
 
     # X is the probability vector; estimator.predict_proba(X) simply returns those probabilities
@@ -334,6 +333,7 @@ def fit_equalized_odds_postprocessor(
         sensitive_features=sensitive_included
     )
 
+    # Create postprocessor bundle for later application and return it
     bundle = {
         "postprocessor": postprocessor,
         "sensitive_attribute": sensitive_attribute,
@@ -366,7 +366,7 @@ def apply_equalized_odds_postprocessor(
     Notes:
         - This method integrates into the global pipeline after the base model has produced
           probabilities for validation/test.
-        - It must not retrain the base classifier and must not modify TF–IDF or raw texts.
+        - It must not retrain the base classifier and must not modify TF-IDF or raw texts.
         - ThresholdOptimizer.predict(...) returns hard labels for included rows, so additional
           thresholding is not applied there.
         - Excluded rows are handled explicitly to ensure downstream evaluation can operate
@@ -910,6 +910,7 @@ def _derive_orientation_sensitive_features(
     trans_flag = df["transgender"] > threshold
     bisexual_flag = df["bisexual"] > threshold
 
+    # background: no lgbtq-identity mention at all
     background_flag = ~has_any_identity
 
     # Rows to include (either hgl, trans, bisexual, or background)

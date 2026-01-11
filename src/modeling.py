@@ -1,7 +1,5 @@
 from typing import Dict, Tuple, Any, Optional, Literal
-import pandas as pd
 
-import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.calibration import CalibratedClassifierCV as CCCV
@@ -9,8 +7,10 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.metrics import f1_score
 from fairlearn.reductions import ExponentiatedGradient
 
+# Define cross-validation strategy
 CV = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
+# Define hyperparameter grid for Logistic Regression
 PARAM_GRID_LR = [
     # 1) liblinear: supports L1 and L2
     {
@@ -44,6 +44,8 @@ def train_lr_tfidf(
     calibrate: bool = True
 ) -> Dict[str, Any]:
     """Train a Logistic Regression model with TF-IDF features.
+    Depending on the 'calibrate' argument, the model can be calibrated using Platt scaling.
+    Depending on the 'parameter_tuning' argument, hyperparameter tuning can be performed using GridSearchCV.
 
     Args:
         X_train (np.ndarray): Training feature matrix.
@@ -62,17 +64,20 @@ def train_lr_tfidf(
             Additionally, the best hyperparameters found during tuning (if parameter_tuning is True) are included under the key "best_params".
     """
 
+    # Hyperparameter tuning
     best_params = None
     if parameter_tuning:
-        best_params = find_best_hyperparameters(x_train, y_train)
+        best_params = _find_best_hyperparameters(x_train, y_train)
 
         class_weight = best_params["class_weight"]
         C = best_params["C"]
         penalty = best_params["penalty"]
         solver = best_params["solver"]
 
+    # Initialize Logistic Regression model
     lr_model = LR(class_weight=class_weight, C=C, penalty=penalty, solver=solver, random_state=random_state, max_iter=max_iter)
     
+    # Calibrate model if specified
     if calibrate:
         model = CCCV(lr_model, method="sigmoid", cv=CV)
         lr_model.fit(x_train, y_train)  # fit uncalibrated model on training set for later use
@@ -137,7 +142,45 @@ def extract_feature_and_label_arrays(
     
     return x, y
 
-def find_best_hyperparameters(
+def find_best_threshold(
+    y_val: np.ndarray,
+    y_proba: np.ndarray,
+    thresholds: Optional[np.ndarray] = None
+) -> float:
+    """Find the best decision threshold based on F1-score.
+
+    Args:
+        y_val (np.ndarray): True labels.
+        y_proba (np.ndarray): Predicted probabilities for the positive class.
+        thresholds (Optional[np.ndarray]): Array of thresholds to evaluate. If None, defaults to values from 0.05 to 0.95 with a step of 0.01.
+
+    Returns:
+        float: Best threshold value.
+    """
+
+    # Define default thresholds if none provided (0.05 to 0.95 with step of 0.01)
+    if thresholds is None:
+        thresholds = np.linspace(0.05, 0.95, 91)
+
+    best_threshold = 0.5
+    best_f1 = -1.0
+    
+    # Evaluate F1-score for each threshold
+    for threshold in thresholds:
+        y_pred = (y_proba >= threshold).astype(int)
+        current_f1 = f1_score(y_val, y_pred)
+
+        # Update best threshold if current F1-score is better
+        if current_f1 > best_f1:
+            best_f1 = current_f1
+            best_threshold = threshold
+
+    print(f"Best threshold: {best_threshold:.2f}")
+    return best_threshold
+
+# Private helper function for hyperparameter tuning
+
+def _find_best_hyperparameters(
     x_train: np.ndarray,
     y_train: np.ndarray,
     param_grid: list[Dict[str, Any]] = PARAM_GRID_LR,
@@ -174,36 +217,3 @@ def find_best_hyperparameters(
     print("Best CV AUC: {:.4f}".format(grid_search.best_score_))
 
     return grid_search.best_params_
-
-def find_best_threshold(
-    y_val: np.ndarray,
-    y_proba: np.ndarray,
-    thresholds: Optional[np.ndarray] = None
-) -> float:
-    """Find the best decision threshold based on F1-score.
-
-    Args:
-        y_val (np.ndarray): True labels.
-        y_proba (np.ndarray): Predicted probabilities for the positive class.
-        thresholds (Optional[np.ndarray]): Array of thresholds to evaluate. If None, defaults to values from 0.05 to 0.95 with a step of 0.01.
-
-    Returns:
-        float: Best threshold value.
-    """
-
-    if thresholds is None:
-        thresholds = np.linspace(0.05, 0.95, 91)
-
-    best_threshold = 0.5
-    best_f1 = -1.0
-
-    for threshold in thresholds:
-        y_pred = (y_proba >= threshold).astype(int)
-        current_f1 = f1_score(y_val, y_pred)
-
-        if current_f1 > best_f1:
-            best_f1 = current_f1
-            best_threshold = threshold
-
-    print(f"Best threshold: {best_threshold:.2f} with F1-score: {best_f1:.4f}")
-    return best_threshold

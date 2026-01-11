@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional, Tuple, Iterable, Sequence
+from typing import Dict, Optional, Tuple, Iterable, Sequence
 import numpy as np
 import pandas as pd
 import sys
@@ -233,7 +233,7 @@ def evaluate_subgroups(
     """
     rows = []
     for col in subgroup_cols:
-        sg, bg, sg_pos, sg_neg, bg_pos, bg_neg = _split_by_subgroup(df, col, label_col, subgroup_mention_threshold)
+        sg, bg, _, _, _, _ = _split_by_subgroup(df, col, label_col, subgroup_mention_threshold)
 
         row = {
             "subgroup": col,
@@ -253,6 +253,59 @@ def evaluate_subgroups(
     return out.sort_values(by=["subgroup_auc", "bpsn_auc", "bnsp_auc"], ascending=[True, True, True]).reset_index(drop=True)
 
 #endregion
+
+def create_result_df(
+    metric: str,
+    subgroups: Sequence[str] = ["homosexual_gay_or_lesbian", "transgender", "bisexual"],
+    models: Sequence[str] = ["baseline", "cda", "fcl", "eo"]
+) -> pd.DataFrame:
+    """
+    Create a DataFrame compiling subgroup metrics for different models.
+    This is used for visualization purposes for the final thesis plots.
+
+    Args:
+        metric (str): The metric to compile (e.g., "gap_fpr", "sg_fpr", etc.).
+        subgroups (Sequence[str]): List of subgroup names to include.
+        models (Sequence[str]): List of model names to include.
+
+    Returns:
+        pd.DataFrame: Compiled DataFrame with columns for subgroup, metric, and model.
+    """
+
+    frames = []
+    
+    for model in models:
+
+        # Determine the path to the metrics file based on the model name
+        path = project_root + "/results/"
+
+        if model == "baseline":
+            path += "tfidf_base_model_subgroup_metrics.joblib"
+        elif model == "cda":
+            path += "tfidf_cda_model_subgroup_metrics.joblib"
+        elif model == "fcl":
+            path += "tfidf_fcl_model_subgroup_metrics.joblib"
+        elif model == "eo":
+            path += "tfidf_eo_sexual_orientation_subgroup_metrics.joblib"
+        else:
+            raise ValueError("Model name is not defined.")
+        
+        metrics_df = joblib.load(path)
+        df = pd.DataFrame()
+
+        # Populate the DataFrame with subgroup names, metric values, and model name
+        df["subgroup"] = metrics_df["subgroup"]
+        df[metric] = metrics_df[metric]
+        df["model"] = model
+
+        # Append to list of DataFrames
+        frames.append(df)
+
+    # Concatenate all DataFrames into a single DataFrame
+    df = pd.concat(frames, ignore_index=True)
+    df = df[df["subgroup"].isin(subgroups)] # Filter for specified subgroups
+
+    return df
 
 #region Private helper functions for calculations
 
@@ -277,6 +330,7 @@ def _split_by_subgroup(
     sg = df[mask_sg] # subgroup
     bg = df[~mask_sg] # background is everything not in subgroup
 
+    #divide further by true labels (toxic / non-toxic)
     sg_pos = sg[sg[label_col] == 1]
     sg_neg = sg[sg[label_col] == 0]
     bg_pos = bg[bg[label_col] == 1]
@@ -307,39 +361,3 @@ def _calculate_safe_auc(
         return np.nan
 
 #endregion
-
-def create_result_df(
-    metric: str,
-    subgroups: Sequence[str] = ["homosexual_gay_or_lesbian", "transgender", "bisexual"],
-    models: Sequence[str] = ["baseline", "cda", "fcl", "eo"]
-) -> pd.DataFrame:
-    frames = []
-    
-    for model in models:
-        path = project_root + "/results/"
-
-        if model == "baseline":
-            path += "tfidf_base_model_subgroup_metrics.joblib"
-        elif model == "cda":
-            path += "tfidf_cda_model_subgroup_metrics.joblib"
-        elif model == "fcl":
-            path += "tfidf_fcl_model_subgroup_metrics.joblib"
-        elif model == "eo":
-            path += "tfidf_eo_sexual_orientation_subgroup_metrics.joblib"
-        else:
-            raise ValueError("Model name is not defined.")
-        
-        metrics_df = joblib.load(path)
-        df = pd.DataFrame()
-
-        df["subgroup"] = metrics_df["subgroup"]
-        df[metric] = metrics_df[metric]
-        df["model"] = model
-
-        frames.append(df)
-
-    df = pd.concat(frames, ignore_index=True)
-    df = df[df["subgroup"].isin(subgroups)]
-
-    return df
-

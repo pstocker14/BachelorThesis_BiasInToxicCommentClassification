@@ -76,7 +76,15 @@ _WS = re.compile(r"\s+") # matches sequences of whitespace
 
 def split_dataset(df: pd.DataFrame, identity_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Splits the dataset into training, testing, and validation sets, 
-    stratified by toxicity label and identity mentions."""
+    stratified by toxicity label and identity mentions.
+    70% training, 15% testing, 15% validation.
+    
+    Args:
+        df (pd.DataFrame): The input DataFrame containing the dataset.
+        identity_cols (list[str]): List of columns indicating identity mentions.
+    
+    Returns:
+        A tuple containing the training, testing, and validation DataFrames."""
 
     df["label"] = (df["target"] >= 0.5).astype(int) # Create binary label based on target threshold of 0.5
 
@@ -112,9 +120,16 @@ def reduce_dataset_size(
     sample_size: int,
     identity_cols: list[str],
     drop_index: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Reduces the dataset size to a specified sample size, stratified by identity mentions."""
-
-    df["label"] = (df["target"] >= 0.5).astype(int) # Create binary label based on target threshold of 0.5
+    """Reduces the dataset size to a specified sample size, stratified by identity mentions.
+    
+    Args:
+        df (pd.DataFrame): The input DataFrame containing the dataset.
+        sample_size (int): The desired sample size for the reduced dataset.
+        identity_cols (list[str]): List of columns indicating identity mentions.
+        drop_index (bool): Whether to drop the original index or keep it as a column.
+        
+    Returns:
+        A tuple containing the sampled DataFrame and the discarded DataFrame."""
 
     df["has_identity_for_stratification"] = (df[identity_cols] > 0.5).any(axis=1).astype(int) # Create binary column indicating presence of any identity mention
 
@@ -127,7 +142,7 @@ def reduce_dataset_size(
 
     # Drop helper column
     for d in (df, sampled_df, discarded_df):
-        d.drop(columns=["strat_key", "has_identity_for_stratification", "label"], inplace=True)
+        d.drop(columns=["strat_key", "has_identity_for_stratification"], inplace=True)
     # Reset the index of the dataframes
     sampled_df = sampled_df.reset_index(drop=drop_index) # let caller decide to keep original index as a column called 'index'
     discarded_df = discarded_df.reset_index(drop=drop_index)
@@ -144,6 +159,11 @@ def clean_comment(comment_text: object) -> str:
     - removes URLs, @mentions, hashtags, emojis
     - keeps letters and spaces only
     - collapses whitespace
+    Args:
+        comment_text (object): The input comment text to clean.
+
+    Returns:
+        str: The cleaned comment text.
     """
 
     if not isinstance(comment_text, str):
@@ -169,7 +189,16 @@ def binarize_labels(
     target_col: str = "target",
     new_col_name: str = "labelled_as_toxic"
 ) -> pd.DataFrame:
-    """Add a binary label column from a continuous target score in [0,1]."""
+    """Add a binary label column from a continuous target score in [0,1].
+    
+    Args:
+        df (pd.DataFrame): The input DataFrame containing the dataset.
+        threshold (float): The threshold above which a comment is considered toxic.
+        target_col (str): The name of the column containing the continuous target scores.
+        new_col_name (str): The name of the new binary label column to create.
+        
+    Returns:
+        pd.DataFrame: The DataFrame with the new binary label column added."""
     
     df[new_col_name] = (df[target_col] >= threshold).astype(int)
     return df
@@ -186,7 +215,15 @@ def build_tfidf_vectorizer(
     stop_words: Optional[list[str]] = list(STOPWORDS),
     dtype: str = "float32"
 ) -> TfidfVectorizer:
-    """Configure a TF-IDF vectorizer for toxic comment classification."""
+    """Configure a TF-IDF vectorizer for toxic comment classification.
+    
+    Args:
+        max_features (Optional[int]): Maximum number of features to keep.
+        ngram_range (Tuple[int, int]): The lower and upper boundary of the n-grams to be extracted.
+        min_df (int): Minimum document frequency for the terms.
+        max_df (float): Maximum document frequency for the terms.
+        stop_words (Optional[list[str]]): List of stop words to remove.
+        dtype (str): Data type of the output matrix."""
     
     return TfidfVectorizer(
         max_features=max_features,
