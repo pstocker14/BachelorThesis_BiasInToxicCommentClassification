@@ -2,7 +2,7 @@
 
 **Author:** Philipp Stocker  
 **Start date:** 2025-10-01  
-**Created scaffold:** 2025-10-18
+**Created scaffold:** 2025-10-18  
 **Project end date:** 2026-01-12
 
 This repository contains code and materials for a bachelor's thesis on detecting and mitigating bias against LGBTQ identities in toxic comment classification using the Jigsaw *Unintended Bias in Toxicity Classification* dataset.
