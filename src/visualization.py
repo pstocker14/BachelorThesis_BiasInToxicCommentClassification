@@ -205,6 +205,10 @@ def plot_grouped_bars_by_model(
     ylabel: Optional[str] = None,
     figsize: Tuple[float, float] = (10, 5),
     rotate_xticks: int = 25,
+    ylabel_fontsize: Optional[int] = None,
+    xtick_fontsize: Optional[int] = None,
+    ytick_fontsize: Optional[int] = None,
+    alpha: float = 1.0, # Transparency level for bars (0.0 to 1.0)
 ) -> Tuple[plt.Figure, plt.Axes]:
     """
     Generic grouped bar plot: x=subgroup, bars=model, y=metric.
@@ -219,6 +223,10 @@ def plot_grouped_bars_by_model(
         ylabel (Optional[str]): Y-axis label.
         figsize (Tuple[float, float]): Figure size.
         rotate_xticks (int): Rotation angle for x-tick labels.
+        ylabel_fontsize (Optional[int]): Font size for y-axis label.
+        xtick_fontsize (Optional[int]): Font size for x-tick labels.
+        ytick_fontsize (Optional[int]): Font size for y-tick labels.
+        alpha (float): Transparency level for bars (0.0 to 1.0).
     """
 
     # Filter
@@ -245,16 +253,21 @@ def plot_grouped_bars_by_model(
         vals = pivot[model].values
         offsets = x - (total_width / 2) + (i + 0.5) * width
         label = pretty_model_names.get(model, model) if pretty_model_names else model
-        ax.bar(offsets, vals, width, label=label)
+        ax.bar(offsets, vals, width, label=label, alpha=alpha)
 
     xtick_labels = list(subgroups)
     ax.set_xticks(x)
-    ax.set_xticklabels(xtick_labels, rotation=rotate_xticks, ha="right")
+    ax.set_xticklabels(xtick_labels, rotation=rotate_xticks, ha="right", fontsize=xtick_fontsize)
 
     ax.axhline(0.0, linewidth=1)
 
     ax.set_ylabel(ylabel or metric)
-    ax.set_title(title or f"{metric} by subgroup and model")
+    if ylabel_fontsize:
+        ax.yaxis.label.set_size(ylabel_fontsize)
+    if ytick_fontsize:
+        ax.tick_params(axis='y', labelsize=ytick_fontsize)
+    if title:
+        ax.set_title(title)
     ax.legend()
 
     fig.tight_layout()
