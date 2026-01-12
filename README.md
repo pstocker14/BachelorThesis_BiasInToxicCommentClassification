@@ -5,7 +5,31 @@
 **Created scaffold:** 2025-10-18
 **Project end date:** 2026-01-12
 
-This repository contains code and materials for a bachelor's thesis on detecting and mitigating bias against LGBTQ identities in toxic comment classification using the Jigsaw *Unintended Bias in Toxicity Classification* dataset.
+## Overview
+
+This repository contains code and materials for a bachelor's thesis from the course "Digitalization-Innovation-Society" of the University of Salzburg. The project investigates bias in machine learning models used for toxic comment classification, with a focus on biases against LGBTQ identities. The study employs the Jigsaw Unintended Bias in Toxicity Classification dataset, which includes comments labeled for toxicity and various identity attributes.
+
+### Objectives
+- Detect and quantify bias in baseline toxicity classification models.
+- Implement and evaluate bias mitigation techniques to reduce unfair treatment of protected groups.
+- Compare the performance and fairness of different mitigation approaches.
+
+### Methods
+- **Data Preprocessing:** Text cleaning, tokenization, and feature extraction using TF-IDF vectorization.
+- **Modeling:** Logistic regression models trained on TF-IDF features.
+- **Bias Mitigation Techniques:**
+  - **Baseline Model:** Standard training without mitigation.
+  - **Counterfactual Data Augmentation (CDA):** Augmenting data with counterfactual examples to reduce bias.
+  - **Fairness-Constrained Learning (FCL):** Incorporating fairness constraints during training.
+  - **Equalized Odds (EO):** Post-processing adjustments to achieve equalized odds across subgroups.
+- **Evaluation:** Overall accuracy, precision, recall, F1-score, ROC-AUC, PR-AUC, and subgroup-specific metrics for bias assessment.
+
+### Project Structure
+- `data/`: Raw and processed datasets, including TF-IDF bundles.
+- `models/`: Trained model files and TF-IDF vectorizers.
+- `notebooks/`: Jupyter notebooks for data exploration, preprocessing, model training, and evaluation.
+- `results/`: Evaluation metrics and performance results.
+- `src/`: Source code for preprocessing, modeling, metrics, visualization, and bias mitigation.
 
 ## Table of Contents
 
